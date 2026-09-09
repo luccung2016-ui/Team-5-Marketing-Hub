@@ -1,0 +1,86 @@
+name: PNE Daily Task Reminder
+
+on:
+  schedule:
+    - cron: '15 1 * * *' # 08:15 Asia/Ho_Chi_Minh
+  workflow_dispatch:
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build and send Telegram reminder
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python - <<'PY'
+          import csv, io, urllib.request, urllib.parse, json
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+
+          DB='1x0rq80tmbYblUxbI1YUaeBXU9zQdibHEhdJemckSieo'
+          DONE={'Đã chốt','Đã đăng','Hoàn thành','Đã hoàn thành'}
+          today=datetime.now(ZoneInfo('Asia/Ho_Chi_Minh')).date()
+
+          def rows(sheet):
+              url=f'https://docs.google.com/spreadsheets/d/{DB}/gviz/tq?tqx=out:csv&sheet={urllib.parse.quote(sheet)}'
+              with urllib.request.urlopen(url, timeout=30) as r:
+                  text=r.read().decode('utf-8-sig')
+              return list(csv.DictReader(io.StringIO(text)))
+
+          def dateval(v):
+              v=(v or '').strip()
+              if not v: return None
+              for fmt in ('%Y-%m-%d','%d/%m/%Y','%d/%m/%y'):
+                  try: return datetime.strptime(v,fmt).date()
+                  except: pass
+              return None
+
+          today_tasks=[]; due=[]; overdue=[]
+          for r in rows('TASKS'):
+              status=(r.get('Trạng thái') or '').strip()
+              if status in DONE: continue
+              name=(r.get('Tên task') or r.get('Task ID') or 'Task chưa đặt tên').strip()
+              tid=(r.get('Task ID') or '').strip()
+              group=(r.get('Kênh / Nhóm') or r.get('Loại') or '').strip()
+              exec_date=dateval(r.get('Ngày đăng / thực hiện'))
+              deadline=dateval(r.get('Deadline'))
+              item=f'• {tid+" · " if tid else ""}{name}' + (f' [{group}]' if group else '')
+              if exec_date==today: today_tasks.append(item)
+              if deadline==today: due.append(item)
+              elif deadline and deadline<today: overdue.append(item + f' — trễ {(today-deadline).days} ngày')
+
+          for r in rows('CONTENT'):
+              status=(r.get('Trạng thái') or '').strip()
+              if status in DONE: continue
+              cid=(r.get('Content ID') or '').strip()
+              title=(r.get('Chủ đề') or cid or 'Content').strip()
+              channel=(r.get('Fanpage / Channel') or '').strip()
+              pub=dateval(r.get('Ngày đăng'))
+              deadline=dateval(r.get('Deadline xử lý'))
+              item=f'• {cid+" · " if cid else ""}{title}' + (f' [{channel}]' if channel else '')
+              if pub==today: today_tasks.append(item)
+              if deadline==today: due.append(item)
+              elif deadline and deadline<today: overdue.append(item + f' — trễ {(today-deadline).days} ngày')
+
+          lines=[f'☀️ PNE Daily Reminder · {today.strftime("%d/%m/%Y")}', '']
+          lines += ['🗓 Việc hôm nay'] + (today_tasks or ['• Không có task theo lịch hôm nay']) + ['']
+          lines += ['⏰ Tới deadline hôm nay'] + (due or ['• Không có task tới deadline']) + ['']
+          lines += ['🔴 Quá hạn'] + (overdue or ['• Không có task quá hạn 🎉']) + ['']
+          if overdue:
+              lines += ['Ưu tiên xử lý mấy task đỏ trước nha, xong rồi mình đi tiếp phần còn lại ✨']
+          elif due:
+              lines += ['Hôm nay chốt gọn mấy task tới hạn là đẹp nè ✨']
+          else:
+              lines += ['Lịch hôm nay khá ổn nè. Làm từng cục một thôi 😆']
+          text='\n'.join(lines)
+
+          token=__import__('os').environ.get('BOT_TOKEN','')
+          chat=__import__('os').environ.get('CHAT_ID','')
+          if not token or not chat: raise SystemExit('Missing Telegram secrets')
+          payload=urllib.parse.urlencode({'chat_id':chat,'text':text}).encode()
+          req=urllib.request.Request(f'https://api.telegram.org/bot{token}/sendMessage',data=payload,method='POST')
+          with urllib.request.urlopen(req,timeout=30) as r:
+              print(r.read().decode())
+          PY
