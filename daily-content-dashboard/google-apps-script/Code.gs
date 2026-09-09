@@ -1,99 +1,86 @@
-const SPREADSHEET_ID = '1l07-4LDdOO-nKWfaf8CYEqQV-oIpr4gsTrqLSPjWIn0';
-const SHEETS = [
-  'Học Tiếng Trung 09.2026',
-  'Học Tiếng Nhật 09.2026',
-  'Học Tiếng Anh 09.2026',
-  'Du Học Nghề Singapore 09.2026',
-  'Du Học Úc 09.2026'
-];
+const SPREADSHEET_ID = '1x0rq80tmbYblUxbI1YUaeBXU9zQdibHEhdJemckSieo';
+const ALLOWED_SHEETS = ['ROUTINES','TASKS','PROJECTS','CONTENT','REVISIONS','PERFORMANCE_FB','PERFORMANCE_TIKTOK'];
 
 function doGet(e) {
   try {
-    const expected = PropertiesService.getScriptProperties().getProperty('DASHBOARD_TOKEN');
-    const token = e && e.parameter ? e.parameter.token : '';
-    if (!expected || token !== expected) return json_({ ok: false, error: 'UNAUTHORIZED' });
-
+    auth_(e && e.parameter ? e.parameter.token : '');
     const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-    const posts = [];
-
-    SHEETS.forEach(name => {
+    const out = {};
+    ALLOWED_SHEETS.forEach(name => {
       const sh = ss.getSheetByName(name);
-      if (!sh) return;
-      const lastRow = sh.getLastRow();
-      if (lastRow < 2) return;
-      const values = sh.getRange(1, 1, lastRow, 11).getDisplayValues();
-      const headers = values[0].map(x => String(x || '').trim());
-      const idx = headerMap_(headers);
-
-      values.slice(1).forEach(r => {
-        const id = cell_(r, idx.id);
-        if (!id) return;
-        posts.push({
-          id,
-          date: normalizeDate_(cell_(r, idx.date)),
-          page: cell_(r, idx.page),
-          pillar: cell_(r, idx.pillar),
-          angle: cell_(r, idx.angle),
-          topic: cell_(r, idx.topic),
-          format: cell_(r, idx.format),
-          audience: cell_(r, idx.audience),
-          status: cell_(r, idx.status) || 'Chờ viết',
-          contentBrief: cell_(r, idx.contentBrief),
-          visualBrief: cell_(r, idx.visualBrief),
-          sourceSheet: name
-        });
-      });
+      out[name] = sh ? sheetObjects_(sh) : [];
     });
-
-    return json_({
-      ok: true,
-      spreadsheetId: SPREADSHEET_ID,
-      spreadsheetName: ss.getName(),
-      syncedAt: new Date().toISOString(),
-      count: posts.length,
-      posts
-    });
+    return json_({ok:true, spreadsheetId:SPREADSHEET_ID, syncedAt:new Date().toISOString(), data:out});
   } catch (err) {
-    return json_({ ok: false, error: String(err && err.message ? err.message : err) });
+    return json_({ok:false,error:String(err && err.message ? err.message : err)});
   }
 }
 
-function headerMap_(h) {
-  const find = names => {
-    for (let i = 0; i < h.length; i++) {
-      const v = h[i].toLowerCase();
-      if (names.some(n => v === n.toLowerCase())) return i;
+function doPost(e) {
+  try {
+    const body = JSON.parse(e.postData && e.postData.contents ? e.postData.contents : '{}');
+    auth_(body.token || '');
+    const sheetName = String(body.sheet || '').trim();
+    if (!ALLOWED_SHEETS.includes(sheetName)) throw new Error('SHEET_NOT_ALLOWED');
+    const action = String(body.action || 'upsert');
+    const record = body.record || {};
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const sh = ss.getSheetByName(sheetName);
+    if (!sh) throw new Error('SHEET_NOT_FOUND');
+    const headers = sh.getRange(1,1,1,sh.getLastColumn()).getDisplayValues()[0].map(String);
+
+    if (action === 'append') {
+      const row = headers.map(h => record[h] == null ? '' : record[h]);
+      sh.appendRow(row);
+      return json_({ok:true,action:'append',row:sh.getLastRow()});
     }
-    return -1;
-  };
-  return {
-    id: find(['ID','Mã content']),
-    date: find(['Ngày đăng','Thứ và Ngày']),
-    page: find(['Fanpage']),
-    pillar: find(['Pillar','Content Pillar']),
-    angle: find(['Angle','Content Angle']),
-    topic: find(['Chủ đề','Chủ đề bài viết']),
-    format: find(['Định dạng']),
-    audience: find(['Nhóm khách hàng']),
-    status: find(['Trạng thái']),
-    contentBrief: find(['Hướng triển khai content','Hướng triển khai content (áp dụng theo content framework phù hợp)']),
-    visualBrief: find(['Hướng triển khai Visual'])
-  };
+
+    if (action === 'update' || action === 'upsert') {
+      const keyField = String(body.keyField || headers[0] || '').trim();
+      const keyValue = String(body.keyValue != null ? body.keyValue : record[keyField] || '').trim();
+      if (!keyField || !keyValue) throw new Error('MISSING_KEY');
+      const keyCol = headers.indexOf(keyField) + 1;
+      if (keyCol < 1) throw new Error('KEY_FIELD_NOT_FOUND');
+      const last = sh.getLastRow();
+      let target = 0;
+      if (last >= 2) {
+        const vals = sh.getRange(2,keyCol,last-1,1).getDisplayValues();
+        for (let i=0;i<vals.length;i++) if (String(vals[i][0]).trim() === keyValue) { target = i+2; break; }
+      }
+      if (!target) {
+        if (action === 'update') throw new Error('RECORD_NOT_FOUND');
+        const row = headers.map(h => record[h] == null ? '' : record[h]);
+        sh.appendRow(row);
+        target = sh.getLastRow();
+      } else {
+        const current = sh.getRange(target,1,1,headers.length).getValues()[0];
+        headers.forEach((h,i) => { if (Object.prototype.hasOwnProperty.call(record,h)) current[i] = record[h]; });
+        sh.getRange(target,1,1,headers.length).setValues([current]);
+      }
+      return json_({ok:true,action:target===sh.getLastRow()?'upsert':'update',row:target});
+    }
+
+    throw new Error('ACTION_NOT_SUPPORTED');
+  } catch (err) {
+    return json_({ok:false,error:String(err && err.message ? err.message : err)});
+  }
 }
 
-function cell_(row, i) { return i >= 0 ? String(row[i] || '').trim() : ''; }
+function auth_(token) {
+  const expected = PropertiesService.getScriptProperties().getProperty('DASHBOARD_TOKEN');
+  if (!expected || token !== expected) throw new Error('UNAUTHORIZED');
+}
 
-function normalizeDate_(v) {
-  if (!v) return '';
-  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
-  const m = v.match(/(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/);
-  if (!m) return v;
-  let y = m[3] || '2026';
-  if (y.length === 2) y = '20' + y;
-  return `${y}-${String(m[2]).padStart(2,'0')}-${String(m[1]).padStart(2,'0')}`;
+function sheetObjects_(sh) {
+  const lastRow = sh.getLastRow(), lastCol = sh.getLastColumn();
+  if (lastRow < 1 || lastCol < 1) return [];
+  const values = sh.getRange(1,1,lastRow,lastCol).getDisplayValues();
+  const headers = values[0].map(x => String(x || '').trim());
+  return values.slice(1).filter(r => r.some(v => String(v || '').trim() !== '')).map((r,i) => {
+    const o = {_row:i+2}; headers.forEach((h,j) => o[h] = r[j] || ''); return o;
+  });
 }
 
 function json_(obj) {
-  return ContentService.createTextOutput(JSON.stringify(obj))
-    .setMimeType(ContentService.MimeType.JSON);
+  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
