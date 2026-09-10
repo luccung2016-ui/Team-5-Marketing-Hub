@@ -3,29 +3,65 @@ name: PNE Daily Task Reminder
 on:
   schedule:
     - cron: '15 1 * * *' # 08:15 Asia/Ho_Chi_Minh
+    - cron: '45 1 * * *' # fallback 08:45 Asia/Ho_Chi_Minh
+    - cron: '15 2 * * *' # fallback 09:15 Asia/Ho_Chi_Minh
   workflow_dispatch:
+    inputs:
+      force_send:
+        description: 'Gửi lại dù hôm nay đã gửi rồi'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pne-daily-reminder
+  cancel-in-progress: false
 
 jobs:
   remind:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Build and send Telegram reminder
         env:
           BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          FORCE_SEND: ${{ github.event.inputs.force_send || 'false' }}
         run: |
           python - <<'PY'
-          import csv, io, urllib.request, urllib.parse, json
+          import csv, io, urllib.request, urllib.parse, json, os
           from datetime import datetime
           from zoneinfo import ZoneInfo
+          from pathlib import Path
 
           DB='1x0rq80tmbYblUxbI1YUaeBXU9zQdibHEhdJemckSieo'
           DONE={'Đã chốt','Đã đăng','Hoàn thành','Đã hoàn thành'}
-          today=datetime.now(ZoneInfo('Asia/Ho_Chi_Minh')).date()
+          now=datetime.now(ZoneInfo('Asia/Ho_Chi_Minh'))
+          today=now.date()
+          today_iso=today.isoformat()
+          force=os.environ.get('FORCE_SEND','false').lower()=='true'
+          state_path=Path('automation/daily-reminder-state.json')
+
+          state={}
+          if state_path.exists():
+              try:
+                  state=json.loads(state_path.read_text(encoding='utf-8'))
+              except Exception:
+                  state={}
+
+          if not force and state.get('last_sent_date')==today_iso:
+              print(f'Reminder already sent for {today_iso}; skipping duplicate.')
+              raise SystemExit(0)
 
           def rows(sheet):
-              url=f'https://docs.google.com/spreadsheets/d/{DB}/gviz/tq?tqx=out:csv&sheet={urllib.parse.quote(sheet)}'
-              with urllib.request.urlopen(url, timeout=30) as r:
+              url=f'https://docs.google.com/spreadsheets/d/{DB}/gviz/tq?tqx=out:csv&sheet={urllib.parse.quote(sheet)}&_={int(now.timestamp())}'
+              req=urllib.request.Request(url, headers={'User-Agent':'Mozilla/5.0'})
+              with urllib.request.urlopen(req, timeout=30) as r:
                   text=r.read().decode('utf-8-sig')
               return list(csv.DictReader(io.StringIO(text)))
 
@@ -34,10 +70,11 @@ jobs:
               if not v: return None
               for fmt in ('%Y-%m-%d','%d/%m/%Y','%d/%m/%y'):
                   try: return datetime.strptime(v,fmt).date()
-                  except: pass
+                  except ValueError: pass
               return None
 
           today_tasks=[]; due=[]; overdue=[]
+
           for r in rows('TASKS'):
               status=(r.get('Trạng thái') or '').strip()
               if status in DONE: continue
@@ -68,19 +105,45 @@ jobs:
           lines += ['🗓 Việc hôm nay'] + (today_tasks or ['• Không có task theo lịch hôm nay']) + ['']
           lines += ['⏰ Tới deadline hôm nay'] + (due or ['• Không có task tới deadline']) + ['']
           lines += ['🔴 Quá hạn'] + (overdue or ['• Không có task quá hạn 🎉']) + ['']
+
           if overdue:
               lines += ['Ưu tiên xử lý mấy task đỏ trước nha, xong rồi mình đi tiếp phần còn lại ✨']
           elif due:
               lines += ['Hôm nay chốt gọn mấy task tới hạn là đẹp nè ✨']
           else:
               lines += ['Lịch hôm nay khá ổn nè. Làm từng cục một thôi 😆']
-          text='\n'.join(lines)
 
-          token=__import__('os').environ.get('BOT_TOKEN','')
-          chat=__import__('os').environ.get('CHAT_ID','')
-          if not token or not chat: raise SystemExit('Missing Telegram secrets')
+          text='\n'.join(lines)
+          token=os.environ.get('BOT_TOKEN','')
+          chat=os.environ.get('CHAT_ID','')
+          if not token or not chat:
+              raise SystemExit('Missing Telegram secrets')
+
           payload=urllib.parse.urlencode({'chat_id':chat,'text':text}).encode()
           req=urllib.request.Request(f'https://api.telegram.org/bot{token}/sendMessage',data=payload,method='POST')
           with urllib.request.urlopen(req,timeout=30) as r:
-              print(r.read().decode())
+              body=r.read().decode()
+              print(body)
+
+          state_path.parent.mkdir(parents=True, exist_ok=True)
+          state.update({
+              'last_sent_date': today_iso,
+              'last_sent_at': now.isoformat(),
+              'today_count': len(today_tasks),
+              'due_count': len(due),
+              'overdue_count': len(overdue)
+          })
+          state_path.write_text(json.dumps(state,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
           PY
+
+      - name: Persist send state
+        run: |
+          if git diff --quiet -- automation/daily-reminder-state.json; then
+            echo "No state change to persist."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add automation/daily-reminder-state.json
+          git commit -m "chore: record daily reminder send state"
+          git push
