@@ -1,0 +1,8 @@
+<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Darcy's Space V5.9</title><style>body{margin:0;background:#f6f7f9;font-family:system-ui}.boot{padding:28px;color:#707784}</style></head><body><div class="boot">Đang mở Darcy's Space…</div><script>
+(async()=>{try{let h=await fetch('v5.8.html?v=59',{cache:'no-store'}).then(r=>{if(!r.ok)throw Error('Không tải được core');return r.text()});
+h=h.replace("refresh:sync};`;d.body.appendChild(bridge);","refresh:async()=>{await sync()}};window.darcyCore={get D(){return D},WD,currentSets,openForm,logout:async()=>{await sb.auth.signOut();location.reload()}};`;d.body.appendChild(bridge);");
+h=h.replaceAll("w.D?.tasks","w.darcyCore?.D?.tasks").replaceAll("w.D?.projects","w.darcyCore?.D?.projects").replaceAll("w.WD?.[","w.darcyCore?.WD?.[").replace("w.currentSets?w.currentSets():{today:[],over:[]}","w.darcyCore?.currentSets?w.darcyCore.currentSets():{today:[],over:[]}");
+h=h.replaceAll("$('#quickTask')?.click()","w.darcyCore?.openForm('tasks')").replaceAll("$('#quickProject')?.click()","w.darcyCore?.openForm('projects')").replaceAll("$('#logoutBtn')?.click()","w.darcyCore?.logout()");
+h=h.replace("$$('[data-refresh]').forEach(b=>b.onclick=()=>w.darcyDB.refresh());","$$('[data-refresh]').forEach(b=>b.onclick=async()=>{await w.darcyDB.refresh();let active=$$('.nav button').find(x=>x.classList.contains('on'))?.dataset.space||'overview';show(active)});");
+document.open();document.write(h);document.close()}catch(e){document.body.innerHTML='<div class="boot">⚠ '+e.message+'</div>'}})();
+</script></body></html>
