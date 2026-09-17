@@ -12,13 +12,11 @@ on:
         required: false
         default: false
         type: boolean
-
 permissions:
   contents: write
 concurrency:
   group: pne-daily-reminder
   cancel-in-progress: false
-
 jobs:
   remind:
     runs-on: ubuntu-latest
@@ -33,20 +31,17 @@ jobs:
         run: |
           python - <<'PY'
           import urllib.request, urllib.parse, json, os
-          from datetime import datetime, date
+          from datetime import datetime, date, timedelta
           from zoneinfo import ZoneInfo
           from pathlib import Path
-          BASE='https://dqxbyikczcfqinxobvsq.supabase.co/rest/v1'
-          key=os.environ.get('SUPABASE_SERVICE_ROLE_KEY','')
-          token=os.environ.get('BOT_TOKEN',''); chat=os.environ.get('CHAT_ID','')
+          BASE='https://dqxbyikczcfqinxobvsq.supabase.co/rest/v1'; key=os.environ.get('SUPABASE_SERVICE_ROLE_KEY',''); token=os.environ.get('BOT_TOKEN',''); chat=os.environ.get('CHAT_ID','')
           if not key: raise SystemExit('Missing SUPABASE_SERVICE_ROLE_KEY secret')
           if not token or not chat: raise SystemExit('Missing Telegram secrets')
-          now=datetime.now(ZoneInfo('Asia/Ho_Chi_Minh')); today=now.date(); today_iso=today.isoformat()
+          now=datetime.now(ZoneInfo('Asia/Ho_Chi_Minh')); today=now.date(); today_iso=today.isoformat(); wd=today.isoweekday(); week_start=today-timedelta(days=wd-1)
           force=os.environ.get('FORCE_SEND','false').lower()=='true'; state_path=Path('automation/daily-reminder-state.json')
           try: state=json.loads(state_path.read_text(encoding='utf-8')) if state_path.exists() else {}
           except: state={}
-          if not force and state.get('last_sent_date')==today_iso:
-            print('Already sent today'); raise SystemExit(0)
+          if not force and state.get('last_sent_date')==today_iso: print('Already sent today'); raise SystemExit(0)
           def get(table,select):
             req=urllib.request.Request(f'{BASE}/{table}?select={urllib.parse.quote(select)}',headers={'apikey':key,'Authorization':'Bearer '+key})
             with urllib.request.urlopen(req,timeout=30) as r:return json.loads(r.read())
@@ -54,33 +49,36 @@ jobs:
             try:return date.fromisoformat(v) if v else None
             except:return None
           DONE=('Hoàn thành','Đã hoàn thành','Đã chốt','Đã đăng')
-          tasks=get('tasks','task_code,name,work_mode,channel_group,execution_date,deadline,status,how_to,project_id')
-          content=get('content','content_code,topic,channel,publish_date,processing_deadline,status')
-          projects={x['id']:x['name'] for x in get('projects','id,name')}
+          tasks=get('tasks','id,task_code,name,work_mode,channel_group,execution_date,deadline,status,how_to,project_id,weekday_start,weekday_end')
+          instances=get('task_weekly_instances','task_id,week_start,status')
+          imap={(x['task_id'],x['week_start']):x['status'] for x in instances}; content=get('content','content_code,topic,channel,publish_date,processing_deadline,status'); projects={x['id']:x['name'] for x in get('projects','id,name')}
           today_items=[]; due=[]; overdue=[]
           for x in tasks:
-            if x.get('status') in DONE: continue
-            suffix='';
-            if x.get('project_id') in projects:suffix=f" [Project: {projects[x['project_id']]}]"
-            elif x.get('channel_group'):suffix=f" [{x['channel_group']}]"
+            suffix=f" [Project: {projects[x['project_id']]}]" if x.get('project_id') in projects else (f" [{x['channel_group']}]" if x.get('channel_group') else '')
             item=f"• {x.get('name') or x.get('task_code') or 'Task'}{suffix}"
+            if x.get('work_mode')=='routine':
+              st=imap.get((x['id'],week_start.isoformat()),'Chưa bắt đầu'); a=x.get('weekday_start'); b=x.get('weekday_end')
+              if st in DONE or not a or not b: continue
+              if a<=wd<=b: today_items.append(item+f' — lịch T{a}→T{b}')
+              if wd==b: due.append(item+' — hạn tuần hôm nay')
+              elif wd>b: overdue.append(item+f' — trễ lịch tuần {wd-b} ngày')
+              continue
+            if x.get('status') in DONE: continue
             if d(x.get('execution_date'))==today: today_items.append(item)
             dl=d(x.get('deadline'))
-            if dl==today:due.append(item)
-            elif dl and dl<today:overdue.append(item+f' — trễ {(today-dl).days} ngày')
+            if dl==today: due.append(item)
+            elif dl and dl<today: overdue.append(item+f' — trễ {(today-dl).days} ngày')
           for x in content:
             if x.get('status') in DONE: continue
             item=f"• {x.get('content_code') or ''} · {x.get('topic') or 'Content'}"+(f" [{x.get('channel')}]" if x.get('channel') else '')
-            if d(x.get('publish_date'))==today:today_items.append(item)
+            if d(x.get('publish_date'))==today: today_items.append(item)
             dl=d(x.get('processing_deadline'))
-            if dl==today:due.append(item)
-            elif dl and dl<today:overdue.append(item+f' — trễ {(today-dl).days} ngày')
-          lines=[f'☀️ PNE Daily Reminder · {today.strftime("%d/%m/%Y")}','', '🗓 Việc hôm nay']+(today_items or ['• Không có task theo lịch hôm nay'])+['','⏰ Tới deadline hôm nay']+(due or ['• Không có task tới deadline'])+['','🔴 Quá hạn']+(overdue or ['• Không có task quá hạn 🎉'])
-          text='\n'.join(lines)
-          payload=urllib.parse.urlencode({'chat_id':chat,'text':text}).encode()
-          req=urllib.request.Request(f'https://api.telegram.org/bot{token}/sendMessage',data=payload,method='POST')
+            if dl==today: due.append(item)
+            elif dl and dl<today: overdue.append(item+f' — trễ {(today-dl).days} ngày')
+          lines=[f'☀️ PNE Daily Reminder · {today.strftime("%d/%m/%Y")}','','🗓 Việc hôm nay']+(today_items or ['• Không có task theo lịch hôm nay'])+['','⏰ Tới deadline hôm nay']+(due or ['• Không có task tới deadline'])+['','🔴 Quá hạn']+(overdue or ['• Không có task quá hạn 🎉'])
+          payload=urllib.parse.urlencode({'chat_id':chat,'text':'\n'.join(lines)}).encode(); req=urllib.request.Request(f'https://api.telegram.org/bot{token}/sendMessage',data=payload,method='POST')
           with urllib.request.urlopen(req,timeout=30) as r: print(r.read().decode())
-          state_path.parent.mkdir(parents=True,exist_ok=True);state.update({'last_sent_date':today_iso,'last_sent_at':now.isoformat(),'source':'supabase','today_count':len(today_items),'due_count':len(due),'overdue_count':len(overdue)});state_path.write_text(json.dumps(state,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          state_path.parent.mkdir(parents=True,exist_ok=True); state.update({'last_sent_date':today_iso,'last_sent_at':now.isoformat(),'source':'supabase-weekly-routines','today_count':len(today_items),'due_count':len(due),'overdue_count':len(overdue)}); state_path.write_text(json.dumps(state,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
           PY
       - name: Persist send state
         run: |
