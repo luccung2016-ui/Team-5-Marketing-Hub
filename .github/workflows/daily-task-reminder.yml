@@ -32,96 +32,122 @@ jobs:
           from datetime import datetime, date, timedelta
           from zoneinfo import ZoneInfo
           from pathlib import Path
-          BASE='https://dqxbyikczcfqinxobvsq.supabase.co/rest/v1'; key=os.environ.get('SUPABASE_SERVICE_ROLE_KEY',''); token=os.environ.get('BOT_TOKEN',''); chat=os.environ.get('CHAT_ID','')
+
+          BASE='https://dqxbyikczcfqinxobvsq.supabase.co/rest/v1'
+          key=os.environ.get('SUPABASE_SERVICE_ROLE_KEY','')
+          token=os.environ.get('BOT_TOKEN','')
+          chat=os.environ.get('CHAT_ID','')
           if not key: raise SystemExit('Missing SUPABASE_SERVICE_ROLE_KEY secret')
           if not token or not chat: raise SystemExit('Missing Telegram secrets')
-          now=datetime.now(ZoneInfo('Asia/Ho_Chi_Minh')); today=now.date(); today_iso=today.isoformat(); wd=today.isoweekday(); week_start=today-timedelta(days=wd-1)
-          force=os.environ.get('FORCE_SEND','false').lower()=='true'; state_path=Path('automation/daily-reminder-state.json')
-          try: state=json.loads(state_path.read_text(encoding='utf-8')) if state_path.exists() else {}
-          except: state={}
-          daily_sent = (state.get('last_sent_date')==today_iso)
-          if daily_sent and not (now.hour==8 and now.minute<15) and not force: print('Daily reminder already sent; continue with schedule reminders')
+
+          TZ=ZoneInfo('Asia/Ho_Chi_Minh')
+          now=datetime.now(TZ)
+          today=now.date()
+          today_iso=today.isoformat()
+          wd=today.isoweekday()
+          week_start=today-timedelta(days=wd-1)
+          force=os.environ.get('FORCE_SEND','false').lower()=='true'
+
           def get(table,select):
             req=urllib.request.Request(f'{BASE}/{table}?select={urllib.parse.quote(select)}',headers={'apikey':key,'Authorization':'Bearer '+key})
             with urllib.request.urlopen(req,timeout=30) as r:return json.loads(r.read())
+
+          def send(text):
+            payload=urllib.parse.urlencode({'chat_id':chat,'text':text}).encode()
+            req=urllib.request.Request(f'https://api.telegram.org/bot{token}/sendMessage',data=payload,method='POST')
+            with urllib.request.urlopen(req,timeout=30) as r:return json.loads(r.read())
+
           def d(v):
             try:return date.fromisoformat(v) if v else None
             except:return None
-          DONE=('Hoàn thành','Đã hoàn thành','Đã chốt','Đã đăng')
-          tasks=get('tasks','id,task_code,name,work_mode,channel_group,execution_date,deadline,status,how_to,project_id,weekday_start,weekday_end')
-          instances=get('task_weekly_instances','task_id,week_start,status')
-          imap={(x['task_id'],x['week_start']):x['status'] for x in instances}; content=get('content','content_code,topic,channel,publish_date,processing_deadline,status'); projects={x['id']:x['name'] for x in get('projects','id,name')}
-          today_items=[]; due=[]; overdue=[]
-          for x in tasks:
-            suffix=f" [Project: {projects[x['project_id']]}]" if x.get('project_id') in projects else (f" [{x['channel_group']}]" if x.get('channel_group') else '')
-            item=f"• {x.get('name') or x.get('task_code') or 'Task'}{suffix}"
-            if x.get('work_mode')=='routine':
-              st=imap.get((x['id'],week_start.isoformat()),'Chưa bắt đầu'); a=x.get('weekday_start'); b=x.get('weekday_end')
-              if st in DONE or not a or not b: continue
-              if a<=wd<=b: today_items.append(item+f' — lịch T{a}→T{b}')
-              if wd==b: due.append(item+' — hạn tuần hôm nay')
-              elif wd>b: overdue.append(item+f' — trễ lịch tuần {wd-b} ngày')
-              continue
-            if x.get('status') in DONE: continue
-            if d(x.get('execution_date'))==today: today_items.append(item)
-            dl=d(x.get('deadline'))
-            if dl==today: due.append(item)
-            elif dl and dl<today: overdue.append(item+f' — trễ {(today-dl).days} ngày')
-          for x in content:
-            if x.get('status') in DONE: continue
-            item=f"• {x.get('content_code') or ''} · {x.get('topic') or 'Content'}"+(f" [{x.get('channel')}]" if x.get('channel') else '')
-            if d(x.get('publish_date'))==today: today_items.append(item)
-            dl=d(x.get('processing_deadline'))
-            if dl==today: due.append(item)
-            elif dl and dl<today: overdue.append(item+f' — trễ {(today-dl).days} ngày')
-          lines=[f'☀️ PNE Daily Reminder · {today.strftime("%d/%m/%Y")}','','🗓 Việc hôm nay']+(today_items or ['• Không có task theo lịch hôm nay'])+['','⏰ Tới deadline hôm nay']+(due or ['• Không có task tới deadline'])+['','🔴 Quá hạn']+(overdue or ['• Không có task quá hạn 🎉'])
-          payload=urllib.parse.urlencode({'chat_id':chat,'text':'\n'.join(lines)}).encode(); req=urllib.request.Request(f'https://api.telegram.org/bot{token}/sendMessage',data=payload,method='POST')
-          with urllib.request.urlopen(req,timeout=30) as r: print(r.read().decode())
-          state_path.parent.mkdir(parents=True,exist_ok=True); state.update({'last_sent_date':today_iso,'last_sent_at':now.isoformat(),'source':'supabase-weekly-routines','today_count':len(today_items),'due_count':len(due),'overdue_count':len(overdue)}); state_path.write_text(json.dumps(state,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
-          PY
 
-          # Schedule summary + reminders are sent through Telegram.
-          # reminder_minutes is honored in Vietnam local time. The workflow runs every 15 minutes.
-          schedules=get('personal_schedule','id,title,event_date,start_time,end_time,location,reminder_minutes,completed,url,notes')
-          if now.hour==8 and now.minute<15 and not daily_sent:
+          DONE=('Hoàn thành','Đã hoàn thành','Đã chốt','Đã đăng')
+          daily_state_path=Path('automation/daily-reminder-state.json')
+          try: daily_state=json.loads(daily_state_path.read_text(encoding='utf-8')) if daily_state_path.exists() else {}
+          except: daily_state={}
+          daily_sent=daily_state.get('last_sent_date')==today_iso
+
+          # Daily Brief: exactly 08:00 Vietnam local time. The workflow itself
+          # runs in UTC; this explicit timezone conversion prevents the old 12–13h issue.
+          if force or (now.hour==8 and now.minute<15 and not daily_sent):
+            tasks=get('tasks','id,task_code,name,work_mode,channel_group,execution_date,deadline,status,project_id,weekday_start,weekday_end')
+            instances=get('task_weekly_instances','task_id,week_start,status')
+            imap={(x['task_id'],x['week_start']):x['status'] for x in instances}
+            content=get('content','content_code,topic,channel,publish_date,processing_deadline,status')
+            projects={x['id']:x['name'] for x in get('projects','id,name')}
+            schedules=get('personal_schedule','id,title,event_date,start_time,end_time,location,reminder_minutes,completed,url,notes')
+
+            today_items=[]; due=[]; overdue=[]
+            for x in tasks:
+              suffix=f" [Project: {projects[x['project_id']}]" if x.get('project_id') in projects else (f" [{x['channel_group']}]" if x.get('channel_group') else '')
+              item=f"• {x.get('name') or x.get('task_code') or 'Task'}{suffix}"
+              if x.get('work_mode')=='routine':
+                st=imap.get((x['id'],week_start.isoformat()),'Chưa bắt đầu')
+                a=x.get('weekday_start'); b=x.get('weekday_end')
+                if st in DONE or not a or not b: continue
+                if a<=wd<=b: today_items.append(item+f' — lịch T{a}→T{b}')
+                if wd==b: due.append(item+' — hạn tuần hôm nay')
+                elif wd>b: overdue.append(item+f' — trễ lịch tuần {wd-b} ngày')
+                continue
+              if x.get('status') in DONE: continue
+              if d(x.get('execution_date'))==today: today_items.append(item)
+              dl=d(x.get('deadline'))
+              if dl==today: due.append(item)
+              elif dl and dl<today: overdue.append(item+f' — trễ {(today-dl).days} ngày')
+
+            for x in content:
+              if x.get('status') in DONE: continue
+              item=f"• {x.get('content_code') or ''} · {x.get('topic') or 'Content'}"+(f" [{x.get('channel')}]" if x.get('channel') else '')
+              if d(x.get('publish_date'))==today: today_items.append(item)
+              dl=d(x.get('processing_deadline'))
+              if dl==today: due.append(item)
+              elif dl and dl<today: overdue.append(item+f' — trễ {(today-dl).days} ngày')
+
             todays=[x for x in schedules if d(x.get('event_date'))==today and not x.get('completed')]
-            sched_lines=[]
+            schedule_lines=[]
             for x in sorted(todays,key=lambda z:z.get('start_time') or '99:99'):
               tm=str(x.get('start_time') or '')[:5]
-              sched_lines.append(f"• {tm+' · ' if tm else ''}{x.get('title') or 'Lịch trình'}"+(f" — {x.get('location')}" if x.get('location') else ''))
-            if sched_lines:
-              # Append the schedule section to the daily message already sent above by rebuilding it.
-              lines += ['','◷ Lịch trình hôm nay'] + sched_lines
-              # The previous send has already happened, so send a single schedule-only addition.
-              send_text='◷ Lịch trình hôm nay\\n'+'\\n'.join(sched_lines)
-              payload=urllib.parse.urlencode({'chat_id':chat,'text':send_text}).encode(); req=urllib.request.Request(f'https://api.telegram.org/bot{token}/sendMessage',data=payload,method='POST')
-              with urllib.request.urlopen(req,timeout=30) as rr: print(rr.read().decode())
+              schedule_lines.append(f"• {tm+' · ' if tm else ''}{x.get('title') or 'Lịch trình'}"+(f" — {x.get('location')}" if x.get('location') else ''))
 
+            lines=[f'☀️ PNE Daily Reminder · {today.strftime("%d/%m/%Y")}','','🗓 Việc hôm nay']+(today_items or ['• Không có task theo lịch hôm nay'])+['','⏰ Tới deadline hôm nay']+(due or ['• Không có task tới deadline'])+['','🔴 Quá hạn']+(overdue or ['• Không có task quá hạn 🎉'])+['','◷ Lịch trình hôm nay']+(schedule_lines or ['• Không có lịch trình hôm nay'])
+            send('\n'.join(lines))
+            daily_state_path.parent.mkdir(parents=True,exist_ok=True)
+            daily_state.update({'last_sent_date':today_iso,'last_sent_at':now.isoformat(),'source':'supabase-asia-ho-chi-minh','today_count':len(today_items),'due_count':len(due),'overdue_count':len(overdue),'schedule_count':len(todays)})
+            daily_state_path.write_text(json.dumps(daily_state,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+
+          # Schedule reminders: Telegram, based on reminder_minutes.
+          # Checked every 15 minutes, using Asia/Ho_Chi_Minh local time.
+          schedules=get('personal_schedule','id,title,event_date,start_time,end_time,location,reminder_minutes,completed,url,notes')
           reminder_path=Path('automation/schedule-reminder-state.json')
           try: reminder_state=json.loads(reminder_path.read_text(encoding='utf-8')) if reminder_path.exists() else {}
           except: reminder_state={}
-          sent_keys=set(reminder_state.get('sent_keys',[])); changed=False
+          sent_keys=set(reminder_state.get('sent_keys',[]))
+          changed=False
           for x in schedules:
             if x.get('completed') or x.get('reminder_minutes') is None or d(x.get('event_date'))!=today or not x.get('start_time'): continue
             hhmm=str(x['start_time'])[:5]
-            try: event=datetime.combine(today,datetime.strptime(hhmm,'%H:%M').time(),tzinfo=ZoneInfo('Asia/Ho_Chi_Minh'))
+            try: event=datetime.combine(today,datetime.strptime(hhmm,'%H:%M').time(),tzinfo=TZ)
             except: continue
             remind_at=event-timedelta(minutes=int(x['reminder_minutes']))
             key_id=f"{x['id']}|{today_iso}|{int(x['reminder_minutes'])}"
             if key_id in sent_keys or not (remind_at<=now<remind_at+timedelta(minutes=15)): continue
-            msg=f"🔔 Nhắc lịch · {x.get('title') or 'Lịch trình'}\\n⏰ Bắt đầu: {hhmm}\\nCòn khoảng {x['reminder_minutes']} phút."
-            if x.get('location'): msg+=f"\\n📍 {x['location']}"
-            payload=urllib.parse.urlencode({'chat_id':chat,'text':msg}).encode(); req=urllib.request.Request(f'https://api.telegram.org/bot{token}/sendMessage',data=payload,method='POST')
-            with urllib.request.urlopen(req,timeout=30) as rr: print(rr.read().decode())
-            sent_keys.add(key_id); changed=True
+            msg=f"🔔 Nhắc lịch · {x.get('title') or 'Lịch trình'}\n⏰ Bắt đầu: {hhmm}\nCòn khoảng {x['reminder_minutes']} phút."
+            if x.get('location'): msg+=f"\n📍 {x['location']}"
+            send(msg)
+            sent_keys.add(key_id)
+            changed=True
+
           if changed:
-            reminder_state['sent_keys']=sorted(sent_keys)[-500:]; reminder_state['updated_at']=now.isoformat()
-            reminder_path.parent.mkdir(parents=True,exist_ok=True); reminder_path.write_text(json.dumps(reminder_state,ensure_ascii=False,indent=2)+'\\n',encoding='utf-8')
+            reminder_state['sent_keys']=sorted(sent_keys)[-500:]
+            reminder_state['updated_at']=now.isoformat()
+            reminder_path.parent.mkdir(parents=True,exist_ok=True)
+            reminder_path.write_text(json.dumps(reminder_state,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          PY
       - name: Persist send state
         run: |
-          if git diff --quiet -- automation/daily-reminder-state.json; then exit 0; fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add automation/daily-reminder-state.json
-          git commit -m "chore: record daily reminder send state"
+          git add automation/daily-reminder-state.json automation/schedule-reminder-state.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "chore: record Telegram reminder state"
           git push
