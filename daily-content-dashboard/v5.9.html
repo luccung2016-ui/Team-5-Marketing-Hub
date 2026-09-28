@@ -114,6 +114,16 @@ const coreOpenFormWithLinks=openForm;
 openForm=async function(table,id=null,preset={}){
   linksOwner={table,id};editingLinks=id?linksFor(table,id).map(link=>({...link})):[];
   coreOpenFormWithLinks(table,id,preset);attachLinksEditor();
+  if(table==='tasks'&&document.querySelector('#routineWeek')){
+    const rw=document.querySelector('#routineWeek'),ws=document.querySelector('#weeklyStatus');
+    const syncRoutineWeek=async()=>{
+      if(!ws)return;
+      const week=rw.value||monday(new Date());
+      const found=(await w.darcyDB.select('task_weekly_instances')).find(x=>x.task_id===id&&x.week_start===week);
+      ws.value=found?.status||'Chưa bắt đầu';
+    };
+    rw.onchange=syncRoutineWeek;
+  }
   if(linksObserver)linksObserver.disconnect();
   linksObserver=new MutationObserver(()=>{if($('#modalBg')?.classList.contains('on'))attachLinksEditor()});
   linksObserver.observe($('#dynamicForm'),{childList:true});
