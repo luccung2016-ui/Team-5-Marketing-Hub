@@ -57,10 +57,16 @@ let calMode='month',weekOffset=0;async function calendar(){let schedules=[];try{
      if(e<s)return;
      segments.push({t,s,e});
    });
-   segments.sort((a,b)=>a.s-b.s||a.e-b.e);
-   let lanes=[];
-   segments.forEach(seg=>{let lane=0;while(lanes[lane]!=null&&lanes[lane]>=seg.s)lane++;lanes[lane]=seg.e;seg.lane=lane});
-   let laneCount=lanes.length, rowHeight=Math.max(150,58+laneCount*34);
+   segments.sort((a,b)=>a.s-b.s||b.e-a.e||a.t.name.localeCompare(b.t.name));
+   const lanes=[];
+   segments.forEach(seg=>{
+     let lane=0;
+     while(lane<lanes.length && lanes[lane]>=seg.s) lane++;
+     if(lane===lanes.length) lanes.push(-1);
+     lanes[lane]=seg.e;
+     seg.lane=lane;
+   });
+   let laneCount=Math.max(1,lanes.length), rowHeight=Math.max(150,58+laneCount*36);
    html+='<div class="month-row" style="min-height:'+rowHeight+'px">';
    for(let di=0;di<7;di++){
      let date=addDays(ws,di),inMonth=date.slice(0,7)===ym;
@@ -76,7 +82,7 @@ let calMode='month',weekOffset=0;async function calendar(){let schedules=[];try{
      let label=seg.s===Math.max(0,Math.round((new Date((t.execution_date||t.deadline)+'T12:00')-new Date(ws+'T12:00'))/86400000))?'▶ '+t.name:t.name;
      if(seg.e===Math.min(6,Math.round((new Date((t.deadline||t.execution_date)+'T12:00')-new Date(ws+'T12:00'))/86400000))&&t.deadline)label+=' · Hạn '+dd(t.deadline);
      let left=(seg.s/7*100),width=((seg.e-seg.s+1)/7*100);
-     html+='<div class="month-taskbar '+cls+(doneState?' is-done':'')+(overdue?' is-overdue':'')+'" data-edit="tasks" data-id="'+t.id+'" style="left:calc('+left+'% + 4px);width:calc('+width+'% - 8px);top:'+(seg.lane*34)+'px" title="'+E(t.name)+'">'+E(label)+'</div>';
+     html+='<div class="month-taskbar '+cls+(doneState?' is-done':'')+(overdue?' is-overdue':'')+'" data-edit="tasks" data-id="'+t.id+'" style="left:calc('+left+'% + 4px);width:calc('+width+'% - 8px);top:'+(seg.lane*36)+'px" title="'+E(t.name)+'">'+E(label)+'</div>';
    });
    html+='</div></div>';
  }
