@@ -1,8 +1,8 @@
 {
-  "last_sent_date": "2026-09-27",
-  "last_sent_at": "2026-09-27T12:57:54.497608+07:00",
-  "today_count": 0,
-  "due_count": 0,
-  "overdue_count": 1,
+  "last_sent_date": "2026-09-28",
+  "last_sent_at": "2026-09-28T13:05:28.771819+07:00",
+  "today_count": 6,
+  "due_count": 1,
+  "overdue_count": 0,
   "source": "supabase-weekly-routines"
 }
