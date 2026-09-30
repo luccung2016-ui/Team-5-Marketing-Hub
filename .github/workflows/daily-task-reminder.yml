@@ -2,7 +2,7 @@ name: PNE Daily Task Reminder
 
 on:
   schedule:
-    - cron: '*/15 * * * *' # GitHub cron is UTC; script converts to Asia/Ho_Chi_Minh
+    - cron: '*/5 * * * *' # UTC; Python converts explicitly to Asia/Ho_Chi_Minh
   workflow_dispatch:
     inputs:
       force_send:
@@ -79,7 +79,7 @@ jobs:
 
             today_items=[]; due=[]; overdue=[]
             for x in tasks:
-              suffix=f" [Project: {projects[x['project_id']}]" if x.get('project_id') in projects else (f" [{x['channel_group']}]" if x.get('channel_group') else '')
+              suffix=f" [Project: {projects[x['project_id']]}]" if x.get('project_id') in projects else (f" [{x['channel_group']}]" if x.get('channel_group') else '')
               item=f"• {x.get('name') or x.get('task_code') or 'Task'}{suffix}"
               if x.get('work_mode')=='routine':
                 st=imap.get((x['id'],week_start.isoformat()),'Chưa bắt đầu')
@@ -130,7 +130,7 @@ jobs:
             except: continue
             remind_at=event-timedelta(minutes=int(x['reminder_minutes']))
             key_id=f"{x['id']}|{today_iso}|{int(x['reminder_minutes'])}"
-            if key_id in sent_keys or not (remind_at<=now<remind_at+timedelta(minutes=30)): continue
+            if key_id in sent_keys or not (remind_at<=now<remind_at+timedelta(minutes=10)): continue
             msg=f"🔔 Nhắc lịch · {x.get('title') or 'Lịch trình'}\n⏰ Bắt đầu: {hhmm}\nCòn khoảng {x['reminder_minutes']} phút."
             if x.get('location'): msg+=f"\n📍 {x['location']}"
             send(msg)
