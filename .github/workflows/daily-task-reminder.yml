@@ -2,7 +2,8 @@ name: PNE Daily Task Reminder
 
 on:
   schedule:
-    - cron: '*/5 * * * *' # UTC; Python converts explicitly to Asia/Ho_Chi_Minh
+    - cron: '0 1 * * *' # 01:00 UTC = 08:00 Vietnam
+    - cron: '*/5 * * * *' # Poll Schedule reminders; Python uses Vietnam time
   workflow_dispatch:
     inputs:
       force_send:
@@ -26,6 +27,7 @@ jobs:
           CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           FORCE_SEND: ${{ github.event.inputs.force_send || 'false' }}
+          SCHEDULE_EXPR: ${{ github.event.schedule || '' }}
         run: |
           python - <<'PY'
           import urllib.request, urllib.parse, json, os
@@ -47,6 +49,7 @@ jobs:
           wd=today.isoweekday()
           week_start=today-timedelta(days=wd-1)
           force=os.environ.get('FORCE_SEND','false').lower()=='true'
+          schedule_expr=os.environ.get('SCHEDULE_EXPR','')
 
           def get(table,select):
             req=urllib.request.Request(f'{BASE}/{table}?select={urllib.parse.quote(select)}',headers={'apikey':key,'Authorization':'Bearer '+key})
@@ -69,7 +72,7 @@ jobs:
 
           # Daily Brief: exactly 08:00 Vietnam local time. The workflow itself
           # runs in UTC; this explicit timezone conversion prevents the old 12–13h issue.
-          if force or (now.hour==8 and not daily_sent):
+          if force or (schedule_expr=='0 1 * * *' and now.hour==8 and not daily_sent):
             tasks=get('tasks','id,task_code,name,work_mode,channel_group,execution_date,deadline,status,project_id,weekday_start,weekday_end')
             instances=get('task_weekly_instances','task_id,week_start,status')
             imap={(x['task_id'],x['week_start']):x['status'] for x in instances}
